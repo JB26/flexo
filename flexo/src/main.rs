@@ -744,10 +744,11 @@ fn serve_from_growing_file(
     let resume_from = resume_from.unwrap_or(0);
     let mut client_received = resume_from;
     let complete_filesize = content_length + resume_from;
+    let mut num_attempts = 0;
     while client_received < complete_filesize {
         let filesize = file.metadata()?.len();
         if filesize > client_received {
-            // TODO note that this while loop runs indefinitely if the file stops growing for whatever reason.
+            num_attempts = 0;
             let result = send_payload_and_flush(&mut file, filesize, client_received as i64, client_stream);
             match result {
                 Ok(size) => {
@@ -762,9 +763,14 @@ fn serve_from_growing_file(
                     return Err(e);
                 }
             }
-        }
-        if client_received < content_length {
-            std::thread::sleep(std::time::Duration::from_micros(500));
+        } else {
+            num_attempts += 1;
+            if num_attempts < 500 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            } else {
+                error!("File stopped growing");
+                return Err(std::io::Error::from(ErrorKind::TimedOut));
+            }
         }
     }
     debug!("File completely served from growing file.");
